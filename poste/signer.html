@@ -3,14 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-cA2IYnQ3ZzpeVxOWi8zsC2RwcJttBWgE5wfSe3r64HA='; style-src 'sha256-15O4iRcVMdBPIka199NwJ9qXOIEWPAYUvULCTY7cs7g='; img-src 'none'; connect-src 'none'; form-action 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-sI6XxvSOlgsXpGubTcet47uiKFbWNR9yEl+hMrZw3kg='; style-src 'sha256-15O4iRcVMdBPIka199NwJ9qXOIEWPAYUvULCTY7cs7g='; img-src 'none'; connect-src 'none'; form-action 'none'; base-uri 'none'">
 <meta name="referrer" content="no-referrer">
 <meta name="robots" content="noindex, nofollow">
 <title>Signature du Poste</title>
-<!-- SIGNATURE-TELEPHONE : la fenêtre de signature du dossier de go (ADR-SIGNATURE-TELEPHONE-1, choix D1). Page statique : aucun
+<!-- SIGNATURE-TELEPHONE : la fenêtre de signature du dossier de go (ADR-SIGNATURE-TELEPHONE-1, choix D1), et GO-FACEID : la mise
+     en ligne avec Face ID (ADR GO-FACEID-1, ?g=), le texte signé vaut le dossier et le Go. Page statique : aucun
      secret, aucun script tiers, aucun appel réseau. La clé Ed25519 est tirée ici, NON EXPORTABLE, et reste dans ce téléphone
      (IndexedDB) ; seule la signature (ou, à l'enrôlement, la clé publique) part au robot Poste par web_app_data_send. Fichier
-     fabriqué par lots/signature-telephone/outils/fabriquer.js : ne pas retoucher à la main (la CSP porte l'empreinte du texte). -->
+     fabriqué par lots/go-faceid/outils/fabriquer.js : ne pas retoucher à la main (la CSP porte l'empreinte du texte). -->
 <style>:root { color-scheme: light dark; --fond: #ffffff; --texte: #111111; --doux: #5f6368; --bord: #c4c7cc; --bouton: #2481cc; --carte: #f4f6f8; }
 @media (prefers-color-scheme: dark) { :root { --fond: #17212b; --texte: #f5f5f5; --doux: #a3acb5; --bord: #3a4a5a; --bouton: #5288c1; --carte: #1f2c3a; } }
 * { box-sizing: border-box; }
@@ -39,9 +40,9 @@ small { display: block; margin-top: 20px; color: var(--doux); font-size: 14px; }
 <p id="aide"></p>
 <section id="dossier" hidden>
 <dl>
-<dt>Lot</dt><dd id="lot"></dd>
+<dt id="l-lot">Lot</dt><dd id="lot"></dd>
 <dt>Commit</dt><dd id="commit"></dd>
-<dt>Demande</dt><dd id="demande"></dd>
+<dt id="l-demande">Demande</dt><dd id="demande"></dd>
 <dt>Nuit</dt><dd id="nuit"></dd>
 <dt>À signer avant</dt><dd id="avant"></dd>
 </dl>
@@ -58,8 +59,10 @@ small { display: block; margin-top: 20px; color: var(--doux); font-size: 14px; }
 <small>La clé reste dans ce téléphone : elle ne peut pas en sortir. Seule la signature part au Poste.</small>
 <script>(function () {
   'use strict';
-  // SIGNATURE-TELEPHONE (ADR-SIGNATURE-TELEPHONE-1, choix D1). Une seule page, 2 usages, choisis par l'adresse que pose le Poste :
+  // SIGNATURE-TELEPHONE (ADR-SIGNATURE-TELEPHONE-1, choix D1). Une seule page, 3 usages, choisis par l'adresse que pose le Poste :
   //   ?d=<charge>  signer le dossier de go montré (Face ID, puis la signature part au robot par web_app_data_send) ;
+  //   ?g=<charge>  GO-FACEID (ADR GO-FACEID-1) : mettre en ligne avec Face ID, sur la fiche du livreur montrée ; le texte
+  //                go-faceid/v1 signé vaut le dossier ET le Go, pour CETTE carte et CETTE fiche, une fois ;
   //   ?enrol=1     enrôler ce téléphone (clé neuve, non exportable ; seule la clé PUBLIQUE part au robot).
   // La clé privée est tirée par WebCrypto avec extractable = false et rangée dans IndexedDB : aucun JavaScript, même celui
   // d'une page piratée, ne peut en lire les octets. Aucun appel réseau, aucun script tiers (CSP par empreinte).
@@ -69,6 +72,9 @@ small { display: block; margin-top: 20px; color: var(--doux); font-size: 14px; }
   var BASE = 'poste-signature', RANGEE = 'cles', NOM = 'dossier';
   var DELAI_MS = 15 * 60 * 1000;
   var occupe = false, parti = false, cleMontree = false;
+  // Le secours dit dans les messages d'erreur : la phrase au terminal (dossier), ou Go puis le code (mise en ligne).
+  var SECOURS_DOSSIER = 'Tu peux signer à la phrase au terminal.', SECOURS_GO = 'Touche Go sur la carte, puis envoie ton code.';
+  var secours = SECOURS_DOSSIER;
   var te = new TextEncoder();
 
   function dire(t) { msg.textContent = t; }
@@ -76,7 +82,7 @@ small { display: block; margin-top: 20px; color: var(--doux); font-size: 14px; }
   function faute(t) { return new ErreurPoste(t); }
   function texteErreur(e) {
     if (e instanceof ErreurPoste) return e.message;
-    return 'Échec (' + (e && e.name ? e.name : 'erreur') + ') : rien n’est envoyé. Tu peux signer à la phrase au terminal.';
+    return 'Échec (' + (e && e.name ? e.name : 'erreur') + ') : rien n’est envoyé. ' + secours;
   }
 
   // Le pont des « web events » de Telegram (core.telegram.org/api/web-events), comme la fenêtre du code.
@@ -111,7 +117,7 @@ small { display: block; margin-top: 20px; color: var(--doux); font-size: 14px; }
   // rangée avec la clé à l'enrôlement, et la page ne signe que si Face ID rend ce jeton-là.
   async function accesFaceId(raison) {
     var i = await demander('web_app_biometry_get_info', {}, 'biometry_info_received', 10000);
-    if (!i.available) throw faute('Face ID n’est pas offert par Telegram ici : signe à la phrase au terminal.');
+    if (!i.available) throw faute('Face ID n’est pas offert par Telegram ici : rien n’est envoyé. ' + secours);
     if (!i.access_granted) {
       i = await demander('web_app_biometry_request_access', { reason: raison }, 'biometry_info_received', 120000);
       if (!i.access_granted) throw faute('Face ID refusé pour le Poste : rien n’est fait.');
@@ -120,7 +126,7 @@ small { display: block; margin-top: 20px; color: var(--doux); font-size: 14px; }
   async function faceId(raison) {
     await accesFaceId(raison);
     var r = await demander('web_app_biometry_request_auth', { reason: raison }, 'biometry_auth_requested', 120000);
-    if (r.status !== 'authorized' || typeof r.token !== 'string' || r.token === '') throw faute('Face ID non validé : rien n’est envoyé.');
+    if (r.status !== 'authorized' || typeof r.token !== 'string' || r.token === '') throw faute('Face ID non validé : rien n’est envoyé. ' + secours);
     return r.token;
   }
   async function poserJeton(jeton) {
@@ -185,6 +191,30 @@ small { display: block; margin-top: 20px; color: var(--doux); font-size: 14px; }
     var texte = ['dossier-go/v2', 'commit ' + o.commit, 'demande ' + o.demande, 'controle_lourd VERT', 'nuit ' + o.nuit + ' vert', 'signe_le ' + o.signe_le].join('\n');
     return { o: o, texte: texte };
   }
+  // GO-FACEID : la charge du mode « mise en ligne », mêmes règles que le Poste (lib/poste/portier/signature-telephone.ts,
+  // chargeGo) ; le texte est celui que le livreur recalcule (lib/poste/livreur/git/go-faceid.ts, texteGoFaceid).
+  var CLES_GO = 'ajouts,commit,commits_total,demande,dossier,fiche,fichiers,fin,lot,mode,nuit,retraits,schema,titre,v,version,zones';
+  function entier(x) { return typeof x === 'number' && isFinite(x) && Math.floor(x) === x && x >= 0 && x <= 100000000; }
+  function lireChargeGo(c) {
+    if (typeof c !== 'string' || c.length === 0 || c.length > 1500 || !/^[A-Za-z0-9_-]+$/.test(c)) return null;
+    var o;
+    try {
+      var b = atob(c.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((c.length + 3) % 4));
+      var u = new Uint8Array(b.length);
+      for (var i = 0; i < b.length; i++) u[i] = b.charCodeAt(i);
+      o = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(u));
+    } catch (e) { return null; }
+    if (!o || typeof o !== 'object' || Array.isArray(o) || Object.keys(o).sort().join(',') !== CLES_GO) return null;
+    if (o.v !== 1 || o.mode !== 'go' || typeof o.lot !== 'string' || !/^[a-z0-9][a-z0-9.-]{0,39}$/.test(o.lot) || typeof o.commit !== 'string' || !/^[0-9a-f]{40}$/.test(o.commit)) return null;
+    if (typeof o.demande !== 'string' || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(o.demande) || !entier(o.version) || o.version < 1 || o.version > 9999999) return null;
+    if (typeof o.fiche !== 'string' || !/^[0-9a-f]{64}$/.test(o.fiche) || !dateExacte(o.nuit) || typeof o.fin !== 'string' || isNaN(Date.parse(o.fin))) return null;
+    if (!entier(o.fichiers) || !entier(o.ajouts) || !entier(o.retraits) || !entier(o.commits_total) || (o.schema !== 'oui' && o.schema !== 'non') || (o.dossier !== 'vert' && o.dossier !== 'au_go')) return null;
+    if (!Array.isArray(o.zones) || o.zones.length > 5 || o.zones.some(function (z) { return typeof z !== 'string' || !/^[a-z][a-z0-9_-]{0,31}$/.test(z); })) return null;
+    if (typeof o.titre !== 'string' || o.titre.length > 90 || CONTROLE.test(o.titre)) return null;
+    var texte = ['go-faceid/v1', 'commit ' + o.commit, 'demande ' + o.demande, 'version ' + o.version, 'fiche ' + o.fiche, 'controle_lourd VERT', 'nuit ' + o.nuit + ' vert'].join('\n');
+    return { o: o, texte: texte };
+  }
+
   function heure(iso) { return new Date(iso).toLocaleString('fr-FR', { timeZone: 'Europe/Paris', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }); }
 
   function montrerDossier(ch) {
@@ -222,6 +252,54 @@ small { display: block; margin-top: 20px; color: var(--doux); font-size: 14px; }
       parti = true;
       envoi('web_app_data_send', { data: 'dossier-telephone/v1 ' + empreinte + ' ' + b64(sig) });
       dire('Signature envoyée au Poste.');
+    } catch (e) {
+      dire(texteErreur(e));
+      agir.disabled = false;
+    } finally {
+      occupe = false;
+    }
+  }
+
+  // GO-FACEID : la fiche du livreur, puis « Mettre en ligne avec Face ID ».
+  function montrerGo(ch) {
+    var o = ch.o;
+    $('titre').textContent = '🙂 Mettre en ligne';
+    $('aide').textContent = 'Tu dis Go pour la fiche du livreur montrée, et tu signes son dossier. Face ID signe une seule fois, pour cette carte et cette fiche. Le livreur vérifie ; tu as ensuite 10 min pour annuler.';
+    $('l-lot').textContent = 'Lot';
+    $('lot').textContent = o.lot + (o.titre ? ' : ' + o.titre : '');
+    $('commit').textContent = o.commit.slice(0, 12);
+    $('l-demande').textContent = 'Fiche';
+    $('demande').textContent = o.fichiers + (o.fichiers > 1 ? ' fichiers' : ' fichier') + ' · +' + o.ajouts + ' −' + o.retraits + ' · ' + o.commits_total + (o.commits_total > 1 ? ' commits' : ' commit') + ' · schéma ' + (o.schema === 'oui' ? 'changé' : 'inchangé') + ' · zones : ' + (o.zones.length ? o.zones.join(', ') : 'aucune');
+    $('nuit').textContent = heure(o.nuit);
+    $('avant').textContent = heure(o.fin);
+    var ul = $('resume');
+    [o.dossier === 'au_go' ? 'Dossier : signé maintenant, avec ce Go' : 'Dossier : déjà signé', 'Carte ' + o.demande + ', version ' + o.version].forEach(function (l) { var li = document.createElement('li'); li.textContent = l; ul.appendChild(li); });
+    $('texte').textContent = ch.texte;
+    $('dossier').hidden = false;
+    agir.textContent = 'Mettre en ligne avec Face ID';
+    agir.hidden = false;
+    agir.addEventListener('click', function () { mettreEnLigne(ch); });
+  }
+
+  async function mettreEnLigne(ch) {
+    if (occupe || parti) return;
+    occupe = true;
+    agir.disabled = true;
+    try {
+      if (!(Date.parse(ch.o.fin) > Date.now())) throw faute('La fiche a expiré : rien n’est signé. Le Poste en montrera une nouvelle.');
+      if (!window.crypto || !crypto.subtle || !window.indexedDB) throw faute('Ce téléphone n’offre pas la signature ici : rien n’est envoyé. ' + secours);
+      var cle = await lireCle();
+      if (!cle) throw faute('Aucune clé sur ce téléphone : rien n’est envoyé. ' + secours);
+      dire('Face ID…');
+      var jeton = await faceId('Mettre en ligne ' + ch.o.lot + ' (' + ch.o.commit.slice(0, 12) + ')');
+      if ((await sha256(jeton)) !== cle.jeton) throw faute('Face ID n’a pas rendu le jeton de l’enrôlement : rien n’est signé.');
+      var octets = te.encode(ch.texte);
+      var sig = await crypto.subtle.sign({ name: 'Ed25519' }, cle.privee, octets);
+      if (!(await crypto.subtle.verify({ name: 'Ed25519' }, cle.publique, sig, octets))) throw faute('La signature ne se vérifie pas : rien n’est envoyé.');
+      var empreinte = await sha256(ch.texte);
+      parti = true;
+      envoi('web_app_data_send', { data: 'go-faceid/v1 ' + empreinte + ' ' + b64(sig) });
+      dire('Go envoyé au Poste : le livreur vérifie.');
     } catch (e) {
       dire(texteErreur(e));
       agir.disabled = false;
@@ -301,11 +379,16 @@ small { display: block; margin-top: 20px; color: var(--doux); font-size: 14px; }
   if (envoi === null) { dire(HORS); return; }
   envoi('web_app_ready', {});
   envoi('web_app_expand', {});
-  if (q.has('d') && !q.has('enrol')) {
+  if (q.has('g') && !q.has('d') && !q.has('enrol')) {
+    secours = SECOURS_GO;
+    var cg = lireChargeGo(q.get('g'));
+    if (cg === null) dire('Fiche illisible : rien à signer. ' + SECOURS_GO);
+    else montrerGo(cg);
+  } else if (q.has('d') && !q.has('enrol') && !q.has('g')) {
     var ch = lireCharge(q.get('d'));
     if (ch === null) dire('Dossier illisible : rien à signer. Demande une nouvelle carte.');
     else montrerDossier(ch);
-  } else if (q.get('enrol') === '1' && !q.has('d')) {
+  } else if (q.get('enrol') === '1' && !q.has('d') && !q.has('g')) {
     montrerEnrolement().catch(function (e) { dire(texteErreur(e)); });
   } else {
     dire(HORS);
