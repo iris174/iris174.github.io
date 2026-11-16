@@ -3,12 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-Mvtsm2gDl3nCB6s0ZUoKI90ATheCkpyTAobD6CoYRmA='; style-src 'sha256-15O4iRcVMdBPIka199NwJ9qXOIEWPAYUvULCTY7cs7g='; img-src 'none'; connect-src 'none'; form-action 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-aI8O8TzWQbsVUHvuUQk3l6jjp6UYXUpwbQIcpuj5icE='; style-src 'sha256-15O4iRcVMdBPIka199NwJ9qXOIEWPAYUvULCTY7cs7g='; img-src 'none'; connect-src 'none'; form-action 'none'; base-uri 'none'">
 <meta name="referrer" content="no-referrer">
 <meta name="robots" content="noindex, nofollow">
 <title>Signature du Poste</title>
 <!-- SIGNATURE-TELEPHONE : la fenêtre de signature du dossier de go (ADR-SIGNATURE-TELEPHONE-1, choix D1), et GO-FACEID : la mise
-     en ligne avec Face ID (ADR GO-FACEID-1, ?g=), le texte signé vaut le dossier et le Go. Page statique : aucun
+     en ligne avec Face ID (ADR GO-FACEID-1, ?g=), le texte signé vaut le dossier et le Go. GO-UNIQUE (ADR-GO-UNIQUE-1) : sur une
+     carte qui porte l'annonce de srv1, le texte signé est go-unique/v1 (dossier et migrations compris), envoyé dans le même cadre. Page statique : aucun
      secret, aucun script tiers, aucun appel réseau. La clé Ed25519 est tirée ici, NON EXPORTABLE, et reste dans ce téléphone
      (IndexedDB) ; seule la signature (ou, à l'enrôlement, la clé publique) part au robot Poste par web_app_data_send. Fichier
      fabriqué par lots/go-simple/outils/fabriquer.js : ne pas retoucher à la main (la CSP porte l'empreinte du texte). -->
@@ -171,6 +172,9 @@ small { display: block; margin-top: 20px; color: var(--doux); font-size: 14px; }
   async function sha256(t) { return hex(await crypto.subtle.digest('SHA-256', typeof t === 'string' ? te.encode(t) : t)); }
   function groupes(e) { return e.replace(/(.{4})(?=.)/g, '$1 '); }
 
+  /* pur:debut */
+  // GO-UNIQUE (ADR-GO-UNIQUE-1) : ce bloc n'utilise ni la page ni le réseau ; il est exécuté tel quel par le test
+  // tests/poste/portier/go-unique-page.test.ts (même texte que le livreur, texteGoUnique).
   // La charge posée par le Poste : mêmes règles que la chaîne (lib/poste/chaine/signature-telephone.ts, lireCharge).
   var CONTROLE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
   function dateExacte(x) {
@@ -198,6 +202,9 @@ small { display: block; margin-top: 20px; color: var(--doux); font-size: 14px; }
   // GO-FACEID : la charge du mode « mise en ligne », mêmes règles que le Poste (lib/poste/portier/signature-telephone.ts,
   // chargeGo) ; le texte est celui que le livreur recalcule (lib/poste/livreur/git/go-faceid.ts, texteGoFaceid).
   var CLES_GO = 'ajouts,commit,commits_total,demande,dossier,fiche,fichiers,fin,lot,mode,nuit,retraits,schema,titre,v,version,zones';
+  // GO-UNIQUE : la charge d'une carte qui porte l'annonce de srv1 a en plus `unique` (dossier, migrations, limite de la carte).
+  // et `base`, le nombre d'ajouts en base de la fiche signée (0 à 10 ; montré, non signé : le livreur relit les migrations).
+  var CLES_GO_UNIQUE = 'ajouts,base,commit,commits_total,demande,dossier,fiche,fichiers,fin,lot,mode,nuit,retraits,schema,titre,unique,v,version,zones';
   function entier(x) { return typeof x === 'number' && isFinite(x) && Math.floor(x) === x && x >= 0 && x <= 100000000; }
   function lireChargeGo(c) {
     if (typeof c !== 'string' || c.length === 0 || c.length > 1500 || !/^[A-Za-z0-9_-]+$/.test(c)) return null;
@@ -208,7 +215,9 @@ small { display: block; margin-top: 20px; color: var(--doux); font-size: 14px; }
       for (var i = 0; i < b.length; i++) u[i] = b.charCodeAt(i);
       o = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(u));
     } catch (e) { return null; }
-    if (!o || typeof o !== 'object' || Array.isArray(o) || Object.keys(o).sort().join(',') !== CLES_GO) return null;
+    if (!o || typeof o !== 'object' || Array.isArray(o)) return null;
+    var cles = Object.keys(o).sort().join(',');
+    if (cles !== CLES_GO && cles !== CLES_GO_UNIQUE) return null;
     if (o.v !== 1 || o.mode !== 'go' || typeof o.lot !== 'string' || !/^[a-z0-9][a-z0-9.-]{0,39}$/.test(o.lot) || typeof o.commit !== 'string' || !/^[0-9a-f]{40}$/.test(o.commit)) return null;
     if (typeof o.demande !== 'string' || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(o.demande) || !entier(o.version) || o.version < 1 || o.version > 9999999) return null;
     if (typeof o.fiche !== 'string' || !/^[0-9a-f]{64}$/.test(o.fiche) || !dateExacte(o.nuit) || typeof o.fin !== 'string' || isNaN(Date.parse(o.fin))) return null;
@@ -216,10 +225,30 @@ small { display: block; margin-top: 20px; color: var(--doux); font-size: 14px; }
     if (!Array.isArray(o.zones) || o.zones.length > 5 || o.zones.some(function (z) { return typeof z !== 'string' || !/^[a-z][a-z0-9_-]{0,31}$/.test(z); })) return null;
     if (typeof o.titre !== 'string' || o.titre.length > 90 || CONTROLE.test(o.titre)) return null;
     var texte = ['go-faceid/v1', 'commit ' + o.commit, 'demande ' + o.demande, 'version ' + o.version, 'fiche ' + o.fiche, 'controle_lourd VERT', 'nuit ' + o.nuit + ' vert'].join('\n');
+    if (cles === CLES_GO_UNIQUE) {
+      // GO-UNIQUE : un seul Face ID signe le dossier ET le Go : le texte go-unique/v1 (lib/poste/livreur/git/go-unique.ts,
+      // texteGoUnique ; dix lignes, dans cet ordre). Une annonce hors de forme : aucune charge, aucun bouton.
+      var u = o.unique;
+      if (!u || typeof u !== 'object' || Array.isArray(u) || Object.keys(u).sort().join(',') !== 'dossier,jusqu,migrations') return null;
+      if (!entier(o.base) || o.base > 10) return null;
+      if (typeof u.dossier !== 'string' || !/^[0-9a-f]{64}$/.test(u.dossier) || typeof u.migrations !== 'string' || !/^[0-9a-f]{64}$/.test(u.migrations) || !dateExacte(u.jusqu)) return null;
+      texte = ['go-unique/v1', 'commit ' + o.commit, 'demande ' + o.demande, 'version ' + o.version, 'fiche ' + o.fiche, 'dossier ' + u.dossier, 'migrations ' + u.migrations, 'controle_lourd VERT', 'nuit ' + o.nuit + ' vert', 'jusqu ' + u.jusqu].join('\n');
+    }
     return { o: o, texte: texte };
   }
 
   function heure(iso) { return new Date(iso).toLocaleString('fr-FR', { timeZone: 'Europe/Paris', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }); }
+  // Les lignes montrées sous la fiche, avant Face ID. GO-UNIQUE : le dossier et les migrations signés (12 premiers signes de
+  // leur empreinte), la carte, et la limite de la carte (après, plus aucun Go).
+  function lignesGo(o) {
+    if (o.unique) {
+      return ['Dossier : empreinte ' + o.unique.dossier.slice(0, 12) + ' (signé par ce même Face ID)', 'Migrations : empreinte ' + o.unique.migrations.slice(0, 12) + ' (relues par le livreur avant l’envoi)',
+        'Ajouts en base : ' + (o.base === 0 ? 'aucun' : o.base + (o.base > 1 ? ' migrations' : ' migration')),
+        'Carte ' + o.demande + ', version ' + o.version, 'Valable jusqu’au ' + heure(o.unique.jusqu)];
+    }
+    return [o.dossier === 'au_go' ? 'Dossier : signé par ce même Face ID' : 'Dossier : déjà signé', 'Carte ' + o.demande + ', version ' + o.version];
+  }
+  /* pur:fin */
 
   function montrerDossier(ch) {
     $('titre').textContent = '✍️ Dossier de go à signer';
@@ -269,7 +298,9 @@ small { display: block; margin-top: 20px; color: var(--doux); font-size: 14px; }
   function montrerGo(ch) {
     var o = ch.o;
     $('titre').textContent = '✅ Go avec Face ID';
-    $('aide').textContent = 'Regarde la fiche du livreur, puis Face ID : c’est ton Go, pour cette carte et cette fiche, une seule fois. Ensuite, 10 min pour annuler.';
+    $('aide').textContent = o.unique
+      ? 'Regarde la fiche du livreur, puis Face ID : un seul geste signe le dossier ET le Go, pour cette carte et cette fiche, une seule fois. Ensuite, 10 min pour annuler.'
+      : 'Regarde la fiche du livreur, puis Face ID : c’est ton Go, pour cette carte et cette fiche, une seule fois. Ensuite, 10 min pour annuler.';
     $('l-lot').textContent = 'Lot';
     $('lot').textContent = o.lot + (o.titre ? ' : ' + o.titre : '');
     $('commit').textContent = o.commit.slice(0, 12);
@@ -278,7 +309,7 @@ small { display: block; margin-top: 20px; color: var(--doux); font-size: 14px; }
     $('nuit').textContent = heure(o.nuit);
     $('avant').textContent = heure(o.fin);
     var ul = $('resume');
-    [o.dossier === 'au_go' ? 'Dossier : signé par ce même Face ID' : 'Dossier : déjà signé', 'Carte ' + o.demande + ', version ' + o.version].forEach(function (l) { var li = document.createElement('li'); li.textContent = l; ul.appendChild(li); });
+    lignesGo(o).forEach(function (l) { var li = document.createElement('li'); li.textContent = l; ul.appendChild(li); });
     $('texte').textContent = ch.texte;
     $('dossier').hidden = false;
     agir.textContent = '✅ Go avec Face ID';
@@ -292,6 +323,7 @@ small { display: block; margin-top: 20px; color: var(--doux); font-size: 14px; }
     agir.disabled = true;
     try {
       if (!(Date.parse(ch.o.fin) > Date.now())) throw faute('La fiche a expiré : rien n’est signé. Le Poste en montrera une nouvelle.');
+      if (ch.o.unique && !(Date.parse(ch.o.unique.jusqu) > Date.now())) throw faute('La carte a expiré : rien n’est signé.');
       if (!window.crypto || !crypto.subtle || !window.indexedDB) throw faute('Ce téléphone n’offre pas la signature ici : rien n’est envoyé. ' + secours);
       var cle = await lireCle();
       if (!cle) throw faute('Aucune clé sur ce téléphone : rien n’est envoyé. ' + secours);
