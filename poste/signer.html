@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-UyPclmI+yWNmXj7o4MDVNharNbtCfWAB/USILbruFus='; style-src 'sha256-15O4iRcVMdBPIka199NwJ9qXOIEWPAYUvULCTY7cs7g='; img-src 'none'; connect-src 'none'; form-action 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-Z5kUK1K2rHd1cz3BEaiPEmm8zryOE+ObbFS2uRuemko='; style-src 'sha256-15O4iRcVMdBPIka199NwJ9qXOIEWPAYUvULCTY7cs7g='; img-src 'none'; connect-src 'none'; form-action 'none'; base-uri 'none'">
 <meta name="referrer" content="no-referrer">
 <meta name="robots" content="noindex, nofollow">
 <title>Signature du Poste</title>
@@ -375,6 +375,109 @@ small { display: block; margin-top: 20px; color: var(--doux); font-size: 14px; }
     agir.hidden = false;
   }
 
+  var SECOURS_REGLAGES = 'Les réglages ne se signent qu’ici, au Face ID : rien n’est changé.';
+  var TYPES_REGLAGES = ['sujet_ajout', 'sujet_retrait', 'competence_installer', 'plafond', 'retour'];
+  var RESERVEES = /^(reglages-hermes\/|demande |type |retour de |application : |fichier |jusqu )/;
+  var DEDANS = /.(fichier (config\.yaml|hermes\.env|freins\.conf|gere\/|competences-externes\/)|application : (relu |lu |redémarrage )|jusqu \d|reglages-hermes\/v)/;
+  var APPLICATION = /^application : (relu par Hermès |lu par les portes |redémarrage propre )/;
+  var FICHIER = /^fichier (config\.yaml|hermes\.env|freins\.conf|gere\/config\.yaml|competences-externes\/[a-z0-9][a-z0-9-]{0,39}\/SKILL\.md) ([0-9a-f]{64}|absent) ([0-9a-f]{64}|absent)$/;
+  var INVISIBLE = '[\\p{C}\\p{Zl}\\p{Zp}\\u1680\\u2000-\\u200a\\u205f\\u3000\\u034f\\u115f\\u1160\\u17b4\\u17b5\\u180b-\\u180f\\u3164\\uffa0\\u2800\\ufe00-\\ufe0f\\u{e0100}-\\u{e01ef}\\u{1d159}\\u{16fe4}]';
+  function lireChargeReglages(c, maintenant) {
+    var illisible = 'la charge est illisible';
+    if (typeof c !== 'string' || c.length === 0 || c.length > 1500 / 3 * 4 || c.length % 4 === 1 || !/^[A-Za-z0-9_-]+$/.test(c)) return illisible;
+    var u, texte, invisible, marques, accents, lettres;
+    try {
+      var b = atob(c.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((c.length + 3) % 4));
+      if (btoa(b).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '') !== c) return illisible;
+      u = new Uint8Array(b.length);
+      for (var i = 0; i < b.length; i++) u[i] = b.charCodeAt(i);
+      texte = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(u);
+    } catch (e) { return illisible; }
+    var e8 = te.encode(texte);
+    if (u.length > 1500 || e8.length !== u.length || e8.some(function (x, i) { return x !== u[i]; })) return illisible;
+    try {
+      invisible = new RegExp(INVISIBLE, 'u');
+      marques = new RegExp('\\p{M}{3}', 'u');
+      accents = new RegExp('\\p{M}', 'gu');
+      lettres = new RegExp('\\p{L}', 'gu');
+    } catch (e) { return 'ce téléphone ne sait pas lire cette carte'; }
+    var plie = function (x) { return x.normalize('NFKC').replace(accents, '').replace(lettres, function (z) { return z < '\u0080' ? z : '\u0001'; }); };
+    var souple = function (r) { return new RegExp(r.source.replace('\\d', '[0-9]{4}-').replace(/[a-zé]/g, function (z) { return '[' + z + '\\u0001]'; })); };
+    var reservees = souple(RESERVEES), dedans = souple(DEDANS);
+    if (texte.charAt(texte.length - 1) !== '\n') return 'le texte ne finit pas par un saut de ligne';
+    var l = texte.slice(0, -1).split('\n');
+    if (l.length < 6 || l.length > 24) return 'la carte a ' + l.length + ' lignes, il en faut de 6 à 24';
+    for (var n = 0; n < l.length; n++) {
+      if (/^[ \u00a0\u202f]*$/.test(l[n])) return 'ligne ' + (n + 1) + ' vide ou faite d’espaces';
+      if (Array.from(l[n]).length > 200) return 'ligne ' + (n + 1) + ' de plus de 200 signes';
+      if (invisible.test(l[n])) return 'ligne ' + (n + 1) + ' avec un caractère de contrôle ou invisible';
+      if (marques.test(l[n])) return 'ligne ' + (n + 1) + ' avec plus de deux accents empilés';
+    }
+    var d = /^demande ([0-9a-f]{16})$/.exec(l[1]), t = /^type ([a-z_]{1,30})$/.exec(l[2]);
+    if (l[0] !== 'reglages-hermes/v1') return 'ligne 1 autre que reglages-hermes/v1';
+    if (!d) return 'ligne 2 autre que « demande » et 16 signes hexadécimaux';
+    if (!t || TYPES_REGLAGES.indexOf(t[1]) < 0) return 'ligne 3 : type inconnu';
+    var k = 3;
+    if (t[1] === 'retour') {
+      var s = /^retour de ([0-9a-f]{16})$/.exec(l[3]);
+      if (!s || s[1] === d[1]) return 'ligne 4 autre que « retour de » et une autre demande';
+      k = 4;
+    }
+    var j = /^jusqu (.*)$/.exec(l[l.length - 1]);
+    if (!j || !dateExacte(j[1])) return 'dernière ligne autre que « jusqu » et une heure exacte';
+    if (!(Date.parse(j[1]) > maintenant)) return 'la carte a expiré ; demande une nouvelle carte au chef';
+    var a = -1;
+    for (n = k; n < l.length - 1; n++) {
+      var y = l[n].replace(/[\u00a0\u202f]/g, ' '), z = plie(y);
+      if (APPLICATION.test(l[n]) && a < 0) a = n;
+      else if (a < 0 && (RESERVEES.test(y) || DEDANS.test(y) || reservees.test(z) || dedans.test(z))) return 'ligne ' + (n + 1) + ' : son texte imite une ligne fichier, application, jusqu ou d’en-tête ; une nouvelle carte serait la même, dis-le au chef';
+      else if (a >= 0) {
+        var f = FICHIER.exec(l[n]);
+        if (!f || f[2] === f[3]) return 'ligne ' + (n + 1) + ' : pas une ligne fichier valable';
+      }
+    }
+    if (a < 0 || a === l.length - 2) return 'pas de ligne application juste avant les lignes fichier';
+    return { octets: u, lignes: l, demande: d[1], jusqu: j[1] };
+  }
+
+  function montrerReglages(ch) {
+    $('titre').textContent = '⚙️ Réglages d’Hermès à signer';
+    $('aide').textContent = 'Le chef propose ce changement de ses réglages. Lis toutes les lignes : Face ID signe exactement ce texte, pour la demande ' + ch.demande + ', une seule fois, avant le ' + heure(ch.jusqu) + '. Rien ne s’applique avant que la signature revienne au chef et que le serveur la vérifie.';
+    var pre = document.createElement('pre'), code = document.createElement('code');
+    code.textContent = ch.lignes.join('\n');
+    pre.appendChild(code);
+    document.body.insertBefore(pre, agir);
+    agir.textContent = 'Signer les réglages avec Face ID';
+    agir.hidden = false;
+    agir.addEventListener('click', function () { signerReglages(ch); });
+  }
+
+  async function signerReglages(ch) {
+    if (occupe || parti) return;
+    occupe = true;
+    agir.disabled = true;
+    try {
+      if (!(Date.parse(ch.jusqu) > Date.now())) throw faute('La carte a expiré : rien n’est signé. Demande une nouvelle carte au chef.');
+      if (!window.crypto || !crypto.subtle || !window.indexedDB) throw faute('Ce téléphone n’offre pas la signature ici : rien n’est envoyé. ' + secours);
+      var cle = await lireCle();
+      if (!cle) throw faute('Aucune clé sur ce téléphone : rien n’est envoyé. ' + secours);
+      dire('Face ID…');
+      var jeton = await faceId('Réglages d’Hermès, demande ' + ch.demande);
+      if ((await sha256(jeton)) !== cle.jeton) throw faute('Face ID n’a pas rendu le jeton de l’enrôlement : rien n’est signé.');
+      var sig = await crypto.subtle.sign({ name: 'Ed25519' }, cle.privee, ch.octets);
+      if (!(await crypto.subtle.verify({ name: 'Ed25519' }, cle.publique, sig, ch.octets))) throw faute('La signature ne se vérifie pas : rien n’est envoyé.');
+      var empreinte = await sha256(ch.octets);
+      parti = true;
+      envoi('web_app_data_send', { data: 'reglages-hermes/v1 ' + empreinte + ' ' + b64(sig) });
+      dire('Signature envoyée. Rien n’est encore appliqué : transmets au chef la réponse reçue ; le serveur vérifiera la signature avant d’appliquer.');
+    } catch (e) {
+      dire(texteErreur(e));
+      agir.disabled = false;
+    } finally {
+      occupe = false;
+    }
+  }
+
   var q = new URLSearchParams(location.search);
   if (envoi === null) { dire(HORS); return; }
   envoi('web_app_ready', {});
@@ -390,6 +493,11 @@ small { display: block; margin-top: 20px; color: var(--doux); font-size: 14px; }
     else montrerDossier(ch);
   } else if (q.get('enrol') === '1' && !q.has('d') && !q.has('g')) {
     montrerEnrolement().catch(function (e) { dire(texteErreur(e)); });
+  } else if (q.has('r') && !q.has('d') && !q.has('g') && !q.has('enrol')) {
+    secours = SECOURS_REGLAGES;
+    var cr = lireChargeReglages(q.get('r'), Date.now());
+    if (typeof cr === 'string') dire('Carte de réglages refusée, rien à signer. Cause : ' + cr + '.');
+    else montrerReglages(cr);
   } else {
     dire(HORS);
   }
