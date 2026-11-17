@@ -3,16 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-aI8O8TzWQbsVUHvuUQk3l6jjp6UYXUpwbQIcpuj5icE='; style-src 'sha256-15O4iRcVMdBPIka199NwJ9qXOIEWPAYUvULCTY7cs7g='; img-src 'none'; connect-src 'none'; form-action 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-UyPclmI+yWNmXj7o4MDVNharNbtCfWAB/USILbruFus='; style-src 'sha256-15O4iRcVMdBPIka199NwJ9qXOIEWPAYUvULCTY7cs7g='; img-src 'none'; connect-src 'none'; form-action 'none'; base-uri 'none'">
 <meta name="referrer" content="no-referrer">
 <meta name="robots" content="noindex, nofollow">
 <title>Signature du Poste</title>
-<!-- SIGNATURE-TELEPHONE : la fenêtre de signature du dossier de go (ADR-SIGNATURE-TELEPHONE-1, choix D1), et GO-FACEID : la mise
-     en ligne avec Face ID (ADR GO-FACEID-1, ?g=), le texte signé vaut le dossier et le Go. GO-UNIQUE (ADR-GO-UNIQUE-1) : sur une
-     carte qui porte l'annonce de srv1, le texte signé est go-unique/v1 (dossier et migrations compris), envoyé dans le même cadre. Page statique : aucun
-     secret, aucun script tiers, aucun appel réseau. La clé Ed25519 est tirée ici, NON EXPORTABLE, et reste dans ce téléphone
-     (IndexedDB) ; seule la signature (ou, à l'enrôlement, la clé publique) part au robot Poste par web_app_data_send. Fichier
-     fabriqué par lots/go-simple/outils/fabriquer.js : ne pas retoucher à la main (la CSP porte l'empreinte du texte). -->
 <style>:root { color-scheme: light dark; --fond: #ffffff; --texte: #111111; --doux: #5f6368; --bord: #c4c7cc; --bouton: #2481cc; --carte: #f4f6f8; }
 @media (prefers-color-scheme: dark) { :root { --fond: #17212b; --texte: #f5f5f5; --doux: #a3acb5; --bord: #3a4a5a; --bouton: #5288c1; --carte: #1f2c3a; } }
 * { box-sizing: border-box; }
@@ -51,7 +45,7 @@ small { display: block; margin-top: 20px; color: var(--doux); font-size: 14px; }
 <details><summary>Texte exact signé</summary><pre id="texte"></pre></details>
 </section>
 <section id="enrol" hidden>
-<p>Empreinte de la clé de ce téléphone (à comparer avec celle que root lit sur srv2) :</p>
+<p>Empreinte de la clé de ce téléphone (à comparer avec celle lue sur le serveur) :</p>
 <p id="empreinte" class="empreinte"></p>
 </section>
 <button id="agir" type="button" hidden></button>
@@ -60,23 +54,12 @@ small { display: block; margin-top: 20px; color: var(--doux); font-size: 14px; }
 <small>La clé reste dans ce téléphone : elle ne peut pas en sortir. Seule la signature part au Poste.</small>
 <script>(function () {
   'use strict';
-  // SIGNATURE-TELEPHONE (ADR-SIGNATURE-TELEPHONE-1, choix D1). Une seule page, 3 usages, choisis par l'adresse que pose le Poste :
-  //   ?d=<charge>  signer le dossier de go montré (Face ID, puis la signature part au robot par web_app_data_send) ;
-  //   ?g=<charge>  GO-FACEID (ADR GO-FACEID-1) : mettre en ligne avec Face ID, sur la fiche du livreur montrée ; le texte
-  //                go-faceid/v1 signé vaut le dossier ET le Go, pour CETTE carte et CETTE fiche, une fois ;
-  //   ?enrol=1     enrôler ce téléphone (clé neuve, non exportable ; seule la clé PUBLIQUE part au robot).
-  // La clé privée est tirée par WebCrypto avec extractable = false et rangée dans IndexedDB : aucun JavaScript, même celui
-  // d'une page piratée, ne peut en lire les octets. Aucun appel réseau, aucun script tiers (CSP par empreinte).
   var $ = function (id) { return document.getElementById(id); };
   var msg = $('msg'), agir = $('agir'), second = $('second');
   var HORS = 'Ouvre cette page par un bouton du Poste, dans Telegram.';
   var BASE = 'poste-signature', RANGEE = 'cles', NOM = 'dossier';
   var DELAI_MS = 15 * 60 * 1000;
   var occupe = false, parti = false, cleMontree = false;
-  // Le secours dit dans les messages d'erreur : la phrase au terminal (dossier), ou Go puis le code (mise en ligne).
-  // GO-SIMPLE : le code n'est plus qu'un secours, sous la carte : « Face ID ne marche pas ? Utiliser le code ».
-  // CORRECTION-1 (I1) : sur une fiche « au_go » (pas encore de dossier), le code seul ne passe pas : le vrai secours est de signer
-  // le dossier à la phrase au terminal (la fiche suivante aura le code en secours) ; la carte ne montre plus « Utiliser le code ».
   var SECOURS_DOSSIER = 'Tu peux signer à la phrase au terminal.', SECOURS_GO = 'Sur la carte : « Face ID ne marche pas ? Utiliser le code ».';
   var SECOURS_AU_GO = 'Signe le dossier à la phrase au terminal : la fiche suivante aura le code en secours.';
   var secours = SECOURS_DOSSIER;
@@ -90,7 +73,6 @@ small { display: block; margin-top: 20px; color: var(--doux); font-size: 14px; }
     return 'Échec (' + (e && e.name ? e.name : 'erreur') + ') : rien n’est envoyé. ' + secours;
   }
 
-  // Le pont des « web events » de Telegram (core.telegram.org/api/web-events), comme la fenêtre du code.
   function pont() {
     var p = window.TelegramWebviewProxy;
     if (p && typeof p.postEvent === 'function') return function (t, d) { p.postEvent(t, JSON.stringify(d)); };
@@ -101,7 +83,6 @@ small { display: block; margin-top: 20px; color: var(--doux); font-size: 14px; }
   }
   var envoi = pont();
 
-  // Les réponses de Telegram : le client appelle window.Telegram.WebView.receiveEvent(type, données).
   var attentes = {};
   function recevoir(type, d) { var f = attentes[type]; if (f) { delete attentes[type]; f(d && typeof d === 'object' ? d : {}); } }
   window.Telegram = window.Telegram || {};
@@ -118,8 +99,6 @@ small { display: block; margin-top: 20px; color: var(--doux); font-size: 14px; }
     });
   }
 
-  // Face ID : le BiometricManager de Telegram. Le jeton n'est qu'un témoin de présence (jamais la clé) : son empreinte est
-  // rangée avec la clé à l'enrôlement, et la page ne signe que si Face ID rend ce jeton-là.
   async function accesFaceId(raison) {
     var i = await demander('web_app_biometry_get_info', {}, 'biometry_info_received', 10000);
     if (!i.available) throw faute('Face ID n’est pas offert par Telegram ici : rien n’est envoyé. ' + secours);
@@ -139,7 +118,6 @@ small { display: block; margin-top: 20px; color: var(--doux); font-size: 14px; }
     if (r.status !== 'updated') throw faute('Face ID : le jeton n’a pas été rangé. Rien n’est enrôlé.');
   }
 
-  // La clé, rangée dans IndexedDB (CryptoKey non exportable : WebKit la chiffre au repos).
   function ouvrirBase() {
     return new Promise(function (ok, non) {
       var q = indexedDB.open(BASE, 1);
@@ -172,10 +150,6 @@ small { display: block; margin-top: 20px; color: var(--doux); font-size: 14px; }
   async function sha256(t) { return hex(await crypto.subtle.digest('SHA-256', typeof t === 'string' ? te.encode(t) : t)); }
   function groupes(e) { return e.replace(/(.{4})(?=.)/g, '$1 '); }
 
-  /* pur:debut */
-  // GO-UNIQUE (ADR-GO-UNIQUE-1) : ce bloc n'utilise ni la page ni le réseau ; il est exécuté tel quel par le test
-  // tests/poste/portier/go-unique-page.test.ts (même texte que le livreur, texteGoUnique).
-  // La charge posée par le Poste : mêmes règles que la chaîne (lib/poste/chaine/signature-telephone.ts, lireCharge).
   var CONTROLE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
   function dateExacte(x) {
     if (typeof x !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(x)) return false;
@@ -199,11 +173,7 @@ small { display: block; margin-top: 20px; color: var(--doux); font-size: 14px; }
     var texte = ['dossier-go/v2', 'commit ' + o.commit, 'demande ' + o.demande, 'controle_lourd VERT', 'nuit ' + o.nuit + ' vert', 'signe_le ' + o.signe_le].join('\n');
     return { o: o, texte: texte };
   }
-  // GO-FACEID : la charge du mode « mise en ligne », mêmes règles que le Poste (lib/poste/portier/signature-telephone.ts,
-  // chargeGo) ; le texte est celui que le livreur recalcule (lib/poste/livreur/git/go-faceid.ts, texteGoFaceid).
   var CLES_GO = 'ajouts,commit,commits_total,demande,dossier,fiche,fichiers,fin,lot,mode,nuit,retraits,schema,titre,v,version,zones';
-  // GO-UNIQUE : la charge d'une carte qui porte l'annonce de srv1 a en plus `unique` (dossier, migrations, limite de la carte).
-  // et `base`, le nombre d'ajouts en base de la fiche signée (0 à 10 ; montré, non signé : le livreur relit les migrations).
   var CLES_GO_UNIQUE = 'ajouts,base,commit,commits_total,demande,dossier,fiche,fichiers,fin,lot,mode,nuit,retraits,schema,titre,unique,v,version,zones';
   function entier(x) { return typeof x === 'number' && isFinite(x) && Math.floor(x) === x && x >= 0 && x <= 100000000; }
   function lireChargeGo(c) {
@@ -226,8 +196,6 @@ small { display: block; margin-top: 20px; color: var(--doux); font-size: 14px; }
     if (typeof o.titre !== 'string' || o.titre.length > 90 || CONTROLE.test(o.titre)) return null;
     var texte = ['go-faceid/v1', 'commit ' + o.commit, 'demande ' + o.demande, 'version ' + o.version, 'fiche ' + o.fiche, 'controle_lourd VERT', 'nuit ' + o.nuit + ' vert'].join('\n');
     if (cles === CLES_GO_UNIQUE) {
-      // GO-UNIQUE : un seul Face ID signe le dossier ET le Go : le texte go-unique/v1 (lib/poste/livreur/git/go-unique.ts,
-      // texteGoUnique ; dix lignes, dans cet ordre). Une annonce hors de forme : aucune charge, aucun bouton.
       var u = o.unique;
       if (!u || typeof u !== 'object' || Array.isArray(u) || Object.keys(u).sort().join(',') !== 'dossier,jusqu,migrations') return null;
       if (!entier(o.base) || o.base > 10) return null;
@@ -238,8 +206,6 @@ small { display: block; margin-top: 20px; color: var(--doux); font-size: 14px; }
   }
 
   function heure(iso) { return new Date(iso).toLocaleString('fr-FR', { timeZone: 'Europe/Paris', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }); }
-  // Les lignes montrées sous la fiche, avant Face ID. GO-UNIQUE : le dossier et les migrations signés (12 premiers signes de
-  // leur empreinte), la carte, et la limite de la carte (après, plus aucun Go).
   function lignesGo(o) {
     if (o.unique) {
       return ['Dossier : empreinte ' + o.unique.dossier.slice(0, 12) + ' (signé par ce même Face ID)', 'Migrations : empreinte ' + o.unique.migrations.slice(0, 12) + ' (relues par le livreur avant l’envoi)',
@@ -248,7 +214,6 @@ small { display: block; margin-top: 20px; color: var(--doux); font-size: 14px; }
     }
     return [o.dossier === 'au_go' ? 'Dossier : signé par ce même Face ID' : 'Dossier : déjà signé', 'Carte ' + o.demande + ', version ' + o.version];
   }
-  /* pur:fin */
 
   function montrerDossier(ch) {
     $('titre').textContent = '✍️ Dossier de go à signer';
@@ -293,8 +258,6 @@ small { display: block; margin-top: 20px; color: var(--doux); font-size: 14px; }
     }
   }
 
-  // GO-FACEID : la fiche du livreur, puis Face ID. GO-SIMPLE : un seul bouton, « ✅ Go avec Face ID », que le dossier soit déjà
-  // signé ou non (sinon, ce même Face ID le signe) ; le texte signé ne change pas (go-faceid/v1).
   function montrerGo(ch) {
     var o = ch.o;
     $('titre').textContent = '✅ Go avec Face ID';
