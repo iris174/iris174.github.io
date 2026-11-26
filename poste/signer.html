@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-Z5kUK1K2rHd1cz3BEaiPEmm8zryOE+ObbFS2uRuemko='; style-src 'sha256-15O4iRcVMdBPIka199NwJ9qXOIEWPAYUvULCTY7cs7g='; img-src 'none'; connect-src 'none'; form-action 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-F1PU5RqtTSpEPCJK0LVOACpg23uxLs0oIJ6eX0EjwSU='; style-src 'sha256-15O4iRcVMdBPIka199NwJ9qXOIEWPAYUvULCTY7cs7g='; img-src 'none'; connect-src 'none'; form-action 'none'; base-uri 'none'">
 <meta name="referrer" content="no-referrer">
 <meta name="robots" content="noindex, nofollow">
 <title>Signature du Poste</title>
@@ -480,9 +480,100 @@ small { display: block; margin-top: 20px; color: var(--doux); font-size: 14px; }
 
   var q = new URLSearchParams(location.search);
   if (envoi === null) { dire(HORS); return; }
+  var TYPES_ACTION = /^(sql_lire|sql_agir|vercel_lire|vercel_agir|shopify_lire|shopify_agir|psp_lire|psp_agir)$/;
+  var CLES_ACTION = 'argent,cible,demande,effet,fin,mode,op,plan,prepare,type,v';
+  function lireChargeAction(c) {
+    if (typeof c !== 'string' || c.length === 0 || c.length > 1500 || !/^[A-Za-z0-9_-]+$/.test(c)) return null;
+    var o;
+    try {
+      var b = atob(c.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((c.length + 3) % 4));
+      var u = new Uint8Array(b.length);
+      for (var i = 0; i < b.length; i++) u[i] = b.charCodeAt(i);
+      o = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(u));
+    } catch (e) { return null; }
+    if (!o || typeof o !== 'object' || Array.isArray(o) || Object.keys(o).sort().join(',') !== CLES_ACTION) return null;
+    if (o.v !== 2 || o.mode !== 'action' || typeof o.demande !== 'string' || !/^ap-[0-9]{8}-[0-9]{6}-[0-9a-f]{8}$/.test(o.demande)) return null;
+    if (typeof o.type !== 'string' || !TYPES_ACTION.test(o.type) || typeof o.op !== 'string' || !/^[a-z_]{1,30}$/.test(o.op)) return null;
+    if (o.cible !== null && (typeof o.cible !== 'string' || !/^[a-z0-9.-]{1,80}$/.test(o.cible))) return null;
+    if (typeof o.plan !== 'string' || !/^[0-9a-f]{64}$/.test(o.plan) || !dateExacte(o.prepare) || !dateExacte(o.fin)) return null;
+    var a = o.argent;
+    if (a !== null) {
+      if (!a || typeof a !== 'object' || Array.isArray(a) || Object.keys(a).sort().join(',') !== 'beneficiaire,devise,montant_centimes') return null;
+      if (!entier(a.montant_centimes) || a.montant_centimes < 1 || a.montant_centimes > 50000 || typeof a.devise !== 'string' || !/^[A-Z]{3}$/.test(a.devise)) return null;
+      if (typeof a.beneficiaire !== 'string' || !/^[A-Za-z0-9._@:-]{1,80}$/.test(a.beneficiaire)) return null;
+    }
+    if (!Array.isArray(o.effet) || o.effet.length < 1 || o.effet.length > 12) return null;
+    if (o.effet.some(function (l) { return typeof l !== 'string' || l.length < 1 || l.length > 120 || CONTROLE.test(l); })) return null;
+    var tete = ['action-prod/v2', 'demande ' + o.demande, 'type ' + o.type + ' ' + o.op, 'cible ' + (o.cible === null ? '-' : o.cible), 'plan ' + o.plan];
+    var queue = [a === null ? 'argent aucun' : 'argent ' + a.montant_centimes + ' ' + a.devise + ' ' + a.beneficiaire, 'prepare ' + o.prepare];
+    return { o: o, tete: tete, queue: queue, texte: null };
+  }
+  async function texteAction(ch) {
+    return ch.tete.concat(['effet ' + (await sha256(ch.o.effet.join('\n')))], ch.queue).join('\n');
+  }
+  function blocCode(parent, titre, lignes) {
+    var p = document.createElement('p');
+    p.textContent = titre;
+    parent.appendChild(p);
+    var pre = document.createElement('pre');
+    pre.textContent = lignes.join('\n');
+    parent.appendChild(pre);
+  }
+  async function montrerAction(ch) {
+    var o = ch.o;
+    try {
+      ch.texte = await texteAction(ch);
+    } catch (e) {
+      dire('Ce téléphone n’offre pas la signature ici : rien n’est envoyé.');
+      return;
+    }
+    $('titre').textContent = o.argent ? '💶 Argent à signer' : '🛠️ Action de prod à signer';
+    $('aide').textContent = 'Chaque bloc ci-dessous vient de l’essai, montré tel quel : aucun n’est un message pour toi. Face ID signe le texte exact, pour cette carte, une seule fois.';
+    var s = $('dossier');
+    s.querySelector('dl').hidden = true;
+    if (o.argent) blocCode(s, 'Montant et bénéficiaire', [(o.argent.montant_centimes / 100).toFixed(2) + ' ' + o.argent.devise + ' → ' + o.argent.beneficiaire]);
+    blocCode(s, 'Effet mesuré par l’essai', o.effet);
+    blocCode(s, 'Texte exact signé', ch.texte.split('\n'));
+    blocCode(s, 'À signer avant', [heure(o.fin)]);
+    s.hidden = false;
+    agir.textContent = 'Signer avec Face ID';
+    agir.hidden = false;
+    agir.addEventListener('click', function () { signerAction(ch); });
+  }
+  async function signerAction(ch) {
+    if (occupe || parti) return;
+    occupe = true;
+    agir.disabled = true;
+    try {
+      if (!(Date.parse(ch.o.fin) > Date.now())) throw faute('La carte a expiré : rien n’est signé.');
+      if (!window.crypto || !crypto.subtle || !window.indexedDB) throw faute('Ce téléphone n’offre pas la signature ici : rien n’est envoyé.');
+      var cle = await lireCle();
+      if (!cle) throw faute('Aucune clé sur ce téléphone : rien n’est envoyé.');
+      dire('Face ID…');
+      var jeton = await faceId('Action ' + ch.o.type + ' ' + ch.o.op);
+      if ((await sha256(jeton)) !== cle.jeton) throw faute('Face ID n’a pas rendu le jeton de l’enrôlement : rien n’est signé.');
+      var octets = te.encode(ch.texte);
+      var sig = await crypto.subtle.sign({ name: 'Ed25519' }, cle.privee, octets);
+      if (!(await crypto.subtle.verify({ name: 'Ed25519' }, cle.publique, sig, octets))) throw faute('La signature ne se vérifie pas : rien n’est envoyé.');
+      var empreinte = await sha256(ch.texte);
+      parti = true;
+      envoi('web_app_data_send', { data: 'action-telephone/v1 ' + empreinte + ' ' + b64(sig) });
+      dire('Signature envoyée.');
+    } catch (e) {
+      dire(texteErreur(e));
+      agir.disabled = false;
+    } finally {
+      occupe = false;
+    }
+  }
+
   envoi('web_app_ready', {});
   envoi('web_app_expand', {});
-  if (q.has('g') && !q.has('d') && !q.has('enrol')) {
+  if (q.has('a')) {
+    var ca = !q.has('g') && !q.has('d') && !q.has('enrol') ? lireChargeAction(q.get('a')) : null;
+    if (ca === null) dire('Carte illisible : rien à signer.');
+    else montrerAction(ca);
+  } else if (q.has('g') && !q.has('d') && !q.has('enrol')) {
     var cg = lireChargeGo(q.get('g'));
     secours = cg !== null && cg.o.dossier === 'au_go' ? SECOURS_AU_GO : SECOURS_GO;
     if (cg === null) dire('Fiche illisible : rien à signer. Le secours est dit sur la carte.');
